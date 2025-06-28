@@ -1,0 +1,204 @@
+import cv2
+import cvzone
+import serial
+import time
+from ultralytics import YOLO
+import threading
+import tkinter as tk
+from PIL import Image, ImageTk
+import queue
+
+# ---------------- Arduino ----------------
+try:
+    arduino = serial.Serial('COM5', 9600)
+    time.sleep(2)
+    arduino_ok = True
+except serial.SerialException:
+    print("⚠️ Arduino not found, running without serial.")
+    arduino_ok = False
+
+lastCommandsSent = set()
+
+# ---------------- YOLO MODELS & Camera ----------------
+model_coco = YOLO("../resource/yolo11n.pt")     # «general» model
+model_custom = YOLO("../resource/v1.3.3.2(50).pt")   # «waste» model
+
+cap = cv2.VideoCapture(0)
+cap.set(3, 1280)
+cap.set(4, 720)
+if not cap.isOpened():
+    print("❌ Camera not detected")
+    exit()
+
+# ---------------- Categories mapping ----------------
+CATEGORIES = {
+    'dangerous': {
+        'classes': {
+            'phone-ipad', 'cell phone', 'battery', 'electronics-device battery',
+            'corrections-fluids', 'laptop', 'mouse', 'keyboard', 'remote',
+            'tvmonitor', 'clock', 'hair drier'
+        },
+        'color': (0, 0, 255),
+        'cmd': 'a'
+    },
+    'recycle': {
+        'classes': {
+            'plastic-bottle', 'bottles', 'cans', 'plastic-box', 'plastic-cup',
+            'bottle', 'wine glass', 'cup', 'bowl', 'fork', 'knife', 'spoon',
+            'vase', 'scissors', 'book',
+        },
+        'color': (0, 255, 255),
+        'cmd': 'b'
+    },
+    'food waste': {
+        'classes': {
+            'apple', 'banana', 'orange', 'bone', 'sandwich', 'pizza',
+            'hot dog', 'cake', 'donut', 'broccoli', 'carrot'
+        },
+        'color': (0, 128, 0),
+        'cmd': 'c'
+    },
+    'general': {
+        'classes': {
+            'alu-foil', 'foam', 'milk-carton', 'toothbrush',  'tie'
+        },
+        'color': (255, 0, 0),
+        'cmd': 'd'
+    }
+}
+
+frame_queue = queue.Queue(maxsize=1)
+info = {
+    'detections': []  # List of dicts: {category, command, conf}
+}
+running = True
+
+# ---------------- Detection thread ----------------
+def detection_loop():
+    global running, lastCommandsSent, info
+
+    models = [
+        (model_coco, model_coco.names),
+        (model_custom, model_custom.names)
+    ]
+
+    while running:
+        ret, img = cap.read()
+        if not ret:
+            break
+
+        detections = []
+        commands_to_send = set()
+
+        for mdl, names_dict in models:
+            for result in mdl(img, stream=True):
+                for box in result.boxes:
+                    conf_box = float(box.conf[0])
+                    if conf_box < 0.59:
+                        continue
+
+                    cls_id = int(box.cls[0])
+                    currentClass = names_dict.get(cls_id, f"cls_{cls_id}")
+
+                    for label, cat in CATEGORIES.items():
+                        if currentClass in cat['classes']:
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            color = cat['color']
+                            text = f"{label} {conf_box:.2f}"
+
+                            # Draw detection
+                            cv2.rectangle(img, (x1, y1), (x2, y2), color, 4)
+                            cvzone.putTextRect(
+                                img, text, (max(0, x1), max(35, y1)),
+                                scale=2, thickness=2,
+                                colorB=color, colorT=(255, 255, 255),
+                                colorR=color, offset=5
+                            )
+
+                            detections.append({
+                                'category': label,
+                                'command': cat['cmd'],
+                                'confidence': conf_box
+                            })
+                            commands_to_send.add(cat['cmd'])
+
+        info['detections'] = detections
+
+        # Send commands if changed
+        if arduino_ok:
+            for cmd in commands_to_send:
+                if cmd not in lastCommandsSent:
+                    arduino.write((cmd + '\n').encode('utf-8'))
+            lastCommandsSent = commands_to_send
+
+        # Resize for display
+        scale_percent = 800 / img.shape[1]
+        new_width = 800
+        new_height = int(img.shape[0] * scale_percent)
+        img_resized = cv2.resize(img, (new_width, new_height))
+
+        img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
+        img_pil = Image.fromarray(img_rgb)
+
+        if not frame_queue.empty():
+            try:
+                frame_queue.get_nowait()
+            except queue.Empty:
+                pass
+        frame_queue.put(img_pil)
+
+    cap.release()
+
+# ---------------- GUI App ----------------
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("YOLO Waste Detector Dashboard")
+        self.geometry("820x900")
+
+        self.img_label = tk.Label(self)
+        self.img_label.pack()
+
+        self.info_label = tk.Label(self, text="", font=("Arial", 16), justify='left')
+        self.info_label.pack(pady=15)
+
+        self.quit_button = tk.Button(self, text="Quit", font=("Arial", 16), command=self.close)
+        self.quit_button.pack(pady=10)
+
+        self.photo = None
+
+        self.update_gui()
+
+    def update_gui(self):
+        try:
+            img_pil = frame_queue.get_nowait()
+            self.photo = ImageTk.PhotoImage(img_pil)
+            self.img_label.config(image=self.photo)
+        except queue.Empty:
+            pass
+
+        if info['detections']:
+            lines = []
+            for det in info['detections']:
+                line = f"{det['category']}: Cmd={det['command']} Conf={det['confidence']:.2f}"
+                lines.append(line)
+            info_text = "\n".join(lines)
+        else:
+            info_text = "No detections"
+
+        self.info_label.config(text=info_text)
+        self.after(33, self.update_gui)
+
+    def close(self):
+        global running
+        running = False
+        self.destroy()
+
+# ---------------- Run ----------------
+app = App()
+threading.Thread(target=detection_loop, daemon=True).start()
+app.mainloop()
+
+if arduino_ok:
+    arduino.close()
+cv2.destroyAllWindows()
