@@ -45,7 +45,7 @@ CATEGORIES = {
         'classes': {
             'plastic-bottle', 'bottles', 'cans', 'plastic-box', 'plastic-cup',
             'bottle', 'wine glass', 'cup', 'bowl', 'fork', 'knife', 'spoon',
-            'vase', 'scissors', 'book',
+            'vase', 'scissors', 'book', 'milk-carton'
         },
         'color': (0, 255, 255),
         'cmd': 'b'
@@ -60,7 +60,7 @@ CATEGORIES = {
     },
     'general': {
         'classes': {
-            'alu-foil', 'foam', 'milk-carton', 'toothbrush',  'tie'
+            'alu-foil', 'foam', 'toothbrush',  'tie'
         },
         'color': (255, 0, 0),
         'cmd': 'd'
