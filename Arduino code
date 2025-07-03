@@ -1,1 +1,138 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Adafruit_PWMServoDriver.h>
+
+// LCD and PWM setup
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
+
+// Channel definitions
+#define CH_SERVO_180 0
+#define CH_SERVO_360 2
+
+// 180° Servo positions
+#define SERVO_LEFT   150
+#define SERVO_CENTER 375
+#define SERVO_RIGHT  530
+
+// 360° Servo directions
+#define SERVO_360_FORWARD 410
+#define SERVO_360_REVERSE 204
+#define SERVO_360_STOP    307
+
+void setup() {
+  Serial.begin(9600);
+  lcd.begin();
+  lcd.backlight();
+
+  pwm.begin();
+  pwm.setPWMFreq(50);
+
+  lcd.setCursor(0, 0);
+  lcd.print("System Ready");
+  lcd.setCursor(0, 1);
+  lcd.print("Waiting...");
+}
+
+void loop() {
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+
+    if (cmd == "b") {
+      handleWaste("Recycle", 200);
+    } else if (cmd == "a") {
+      handleWaste("Dangerous", 0);
+    } else if (cmd == "c") {
+      handleWaste("Food waste", 420);
+    } else if (cmd == "d") {
+      handleWaste("General", 600);
+    }
+  }
+}
+
+// ----- Action Sequence -----
+void handleWaste(String label, int delay360ms) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print(label);
+
+  // Reverse 360° if needed
+  if (delay360ms > 0) {
+    pwm.setPWM(CH_SERVO_360, 0, SERVO_360_REVERSE);
+    delay(delay360ms);
+    pwm.setPWM(CH_SERVO_360, 0, SERVO_360_STOP);
+  }
+
+  // Show countdown
+  for (int i = 10; i >= 0; i--) {
+    lcd.setCursor(0, 1);
+    lcd.print("Throw it in ");
+    lcd.print(i);
+    lcd.print("  ");
+    delay(1000);
+  }
+
+  // Show processing
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Processing...");
+  lcd.setCursor(0, 1);
+  lcd.print("[          ]");
+
+  // Move servos while running progress bar
+  runProcessingAndServos(delay360ms);
+
+  // Return to ready
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("System Ready");
+  lcd.setCursor(0, 1);
+  lcd.print("Waiting...");
+}
+
+// ----- Run Servos During Progress Bar -----
+void runProcessingAndServos(int forwardDelay360ms) {
+  const int steps = 10;
+  const int totalDuration = 2400; // ms
+  const int stepDelay = totalDuration / steps;
+
+  // Timings for servo events (in ms)
+  unsigned long startTime = millis();
+
+  bool lMoved = false, c1Moved = false, rMoved = false, c2Moved = false, forwardMoved = false;
+
+  for (int i = 0; i <= steps; i++) {
+    unsigned long now = millis();
+    unsigned long elapsed = now - startTime;
+
+    // Progress bar update
+    lcd.setCursor(1 + i, 1);
+    lcd.print("=");
+
+    // Schedule 180° sequence
+    if (!lMoved && elapsed >= 0) {
+      pwm.setPWM(CH_SERVO_180, 0, SERVO_LEFT); lMoved = true;
+    }
+    if (!c1Moved && elapsed >= 500) {
+      pwm.setPWM(CH_SERVO_180, 0, SERVO_CENTER); c1Moved = true;
+    }
+    if (!rMoved && elapsed >= 1000) {
+      pwm.setPWM(CH_SERVO_180, 0, SERVO_RIGHT); rMoved = true;
+    }
+    if (!c2Moved && elapsed >= 1500) {
+      pwm.setPWM(CH_SERVO_180, 0, SERVO_CENTER); c2Moved = true;
+    }
+
+    // Forward 360° if needed
+    if (!forwardMoved && forwardDelay360ms > 0 && elapsed >= 500) {
+      pwm.setPWM(CH_SERVO_360, 0, SERVO_360_FORWARD);
+      delay(forwardDelay360ms);
+      pwm.setPWM(CH_SERVO_360, 0, SERVO_360_STOP);
+      forwardMoved = true;
+    }
+
+    delay(stepDelay);
+  }
+}
 
