@@ -5,6 +5,8 @@ Python requirements
 4 filterpy (เวอร์ชันล่าสุด)
 5 scikit-image (เวอร์ชันล่าสุด)
 6 lap (เวอร์ชันล่าสุด) 
+7 yolov11n.pt
+8 
 
 Arduino requirements
 1 LiquidCrystal_I2C.h
