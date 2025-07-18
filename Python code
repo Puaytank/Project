@@ -17,7 +17,7 @@ except serial.SerialException:
     print("⚠️ Arduino not found, running without serial.")
     arduino_ok = False
 
-lastCommandsSent = set()
+lastSentCommand = None  # Only send when this changes
 
 # ---------------- YOLO MODELS & Camera ----------------
 model_coco = YOLO("../resource/yolo11n.pt")        # General model
@@ -75,7 +75,7 @@ running = True
 
 # ---------------- Detection Thread ----------------
 def detection_loop():
-    global running, lastCommandsSent, info
+    global running, lastSentCommand, info
 
     models = [
         (model_coco, model_coco.names),
@@ -116,7 +116,6 @@ def detection_loop():
                             best_label = label
 
         detections = []
-        commands_to_send = set()
 
         if best_detection:
             x1, y1, x2, y2 = best_box
@@ -129,15 +128,15 @@ def detection_loop():
                 colorR=best_color, offset=5
             )
             detections.append(best_detection)
-            commands_to_send.add(best_detection['command'])
+
+            # Send to Arduino if command has changed
+            if arduino_ok:
+                current_cmd = best_detection['command']
+                if current_cmd != lastSentCommand:
+                    arduino.write((current_cmd + '\n').encode('utf-8'))
+                    lastSentCommand = current_cmd
 
         info['detections'] = detections
-
-        if arduino_ok:
-            for cmd in commands_to_send:
-                if cmd not in lastCommandsSent:
-                    arduino.write((cmd + '\n').encode('utf-8'))
-            lastCommandsSent = commands_to_send
 
         scale_percent = 800 / img.shape[1]
         new_width = 800
