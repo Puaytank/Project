@@ -20,8 +20,8 @@ except serial.SerialException:
 lastCommandsSent = set()
 
 # ---------------- YOLO MODELS & Camera ----------------
-model_coco = YOLO("../resource/yolo11n.pt")     # «general» model
-model_custom = YOLO("../resource/v1.3.3.2(50).pt")   # «waste» model
+model_coco = YOLO("../resource/yolo11n.pt")        # General model
+model_custom = YOLO("../resource/v1.3.3.2(50).pt")  # Waste model
 
 cap = cv2.VideoCapture(0)
 cap.set(3, 1280)
@@ -60,7 +60,7 @@ CATEGORIES = {
     },
     'general': {
         'classes': {
-            'alu-foil', 'foam', 'toothbrush',  'tie'
+            'alu-foil', 'foam', 'toothbrush', 'tie'
         },
         'color': (255, 0, 0),
         'cmd': 'd'
@@ -69,11 +69,11 @@ CATEGORIES = {
 
 frame_queue = queue.Queue(maxsize=1)
 info = {
-    'detections': []  # List of dicts: {category, command, conf}
+    'detections': []
 }
 running = True
 
-# ---------------- Detection thread ----------------
+# ---------------- Detection Thread ----------------
 def detection_loop():
     global running, lastCommandsSent, info
 
@@ -87,8 +87,11 @@ def detection_loop():
         if not ret:
             break
 
-        detections = []
-        commands_to_send = set()
+        best_detection = None
+        best_conf = 0
+        best_box = None
+        best_color = (255, 255, 255)
+        best_label = ""
 
         for mdl, names_dict in models:
             for result in mdl(img, stream=True):
@@ -101,42 +104,45 @@ def detection_loop():
                     currentClass = names_dict.get(cls_id, f"cls_{cls_id}")
 
                     for label, cat in CATEGORIES.items():
-                        if currentClass in cat['classes']:
-                            x1, y1, x2, y2 = map(int, box.xyxy[0])
-                            color = cat['color']
-                            text = f"{label} {conf_box:.2f}"
-
-                            # Draw detection
-                            cv2.rectangle(img, (x1, y1), (x2, y2), color, 4)
-                            cvzone.putTextRect(
-                                img, text, (max(0, x1), max(35, y1)),
-                                scale=2, thickness=2,
-                                colorB=color, colorT=(255, 255, 255),
-                                colorR=color, offset=5
-                            )
-
-                            detections.append({
+                        if currentClass in cat['classes'] and conf_box > best_conf:
+                            best_conf = conf_box
+                            best_detection = {
                                 'category': label,
                                 'command': cat['cmd'],
                                 'confidence': conf_box
-                            })
-                            commands_to_send.add(cat['cmd'])
+                            }
+                            best_box = map(int, box.xyxy[0])
+                            best_color = cat['color']
+                            best_label = label
+
+        detections = []
+        commands_to_send = set()
+
+        if best_detection:
+            x1, y1, x2, y2 = best_box
+            text = f"{best_label} {best_conf:.2f}"
+            cv2.rectangle(img, (x1, y1), (x2, y2), best_color, 4)
+            cvzone.putTextRect(
+                img, text, (max(0, x1), max(35, y1)),
+                scale=2, thickness=2,
+                colorB=best_color, colorT=(255, 255, 255),
+                colorR=best_color, offset=5
+            )
+            detections.append(best_detection)
+            commands_to_send.add(best_detection['command'])
 
         info['detections'] = detections
 
-        # Send commands if changed
         if arduino_ok:
             for cmd in commands_to_send:
                 if cmd not in lastCommandsSent:
                     arduino.write((cmd + '\n').encode('utf-8'))
             lastCommandsSent = commands_to_send
 
-        # Resize for display
         scale_percent = 800 / img.shape[1]
         new_width = 800
         new_height = int(img.shape[0] * scale_percent)
         img_resized = cv2.resize(img, (new_width, new_height))
-
         img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
         img_pil = Image.fromarray(img_rgb)
 
@@ -166,7 +172,6 @@ class App(tk.Tk):
         self.quit_button.pack(pady=10)
 
         self.photo = None
-
         self.update_gui()
 
     def update_gui(self):
@@ -178,11 +183,8 @@ class App(tk.Tk):
             pass
 
         if info['detections']:
-            lines = []
-            for det in info['detections']:
-                line = f"{det['category']}: Cmd={det['command']} Conf={det['confidence']:.2f}"
-                lines.append(line)
-            info_text = "\n".join(lines)
+            det = info['detections'][0]
+            info_text = f"Category: {det['category']} | Command: {det['command']} | Confidence: {det['confidence']:.2f}"
         else:
             info_text = "No detections"
 
