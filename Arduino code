@@ -50,7 +50,6 @@ uint16_t mapAngleToPulse(int angle) {
 
 // Function prototypes
 void startSequence(String label, int reverseMs, bool forward360);
-
 void updateSequence();
 
 void setup() {
@@ -150,29 +149,24 @@ void updateSequence() {
     case PROCESSING:
       if (elapsed >= stepDuration) {
         if (progressIndex < progressSteps) {
-          // Only print '=' starting from progressIndex 1 (no zero)
           if (progressIndex > 0) {
-            lcd.setCursor(1 + progressIndex - 1, 1); // Progress bar starts inside the brackets
+            lcd.setCursor(1 + progressIndex - 1, 1);
             lcd.print("=");
           }
 
           if (progressIndex == 0) {
-            // Move servo 180 to 30°
             pwm.setPWM(CH_SERVO_180, 0, mapAngleToPulse(30));
           }
           else if (progressIndex == 2) {
-            // Move servo 180 to 90° (changed from 110°)
-            pwm.setPWM(CH_SERVO_180, 0, mapAngleToPulse(90));
+            pwm.setPWM(CH_SERVO_180, 0, mapAngleToPulse(80));  // ← changed from 90° to 80°
           }
           else if (progressIndex == 4) {
-            // Move servo 180 back to 30°
             pwm.setPWM(CH_SERVO_180, 0, mapAngleToPulse(30));
           }
 
           progressIndex++;
           stateStartTime = now;
         } else {
-          // After servo 180 finished, move 360 forward if needed
           if (forward360Needed) {
             pwm.setPWM(CH_SERVO_360, 0, SERVO_360_FORWARD);
             stateStartTime = now;
